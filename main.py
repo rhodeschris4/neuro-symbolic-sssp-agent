@@ -104,7 +104,13 @@ config = {
 # In main.py
 
 if __name__ == '__main__':
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+     # --- NEW: Check for CUDA, then MPS, then CPU ---
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
     print(f"Using device: {device}")
 
     goal_state = (8, 8)

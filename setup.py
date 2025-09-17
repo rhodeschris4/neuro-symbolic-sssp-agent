@@ -1,16 +1,22 @@
 from setuptools import setup, Extension
 import pybind11
+import sys
 
-# Define the C++ extension module
-cpp_args = ['-std=c++17', '-O3']
+# --- NEW: Platform-specific compiler arguments ---
+# MSVC (Windows) uses /std:c++17, while GCC/Clang (macOS/Linux) use -std=c++17
+if sys.platform == 'win32':
+    cpp_args = ['/std:c++17', '/O2', '/EHsc']
+else:
+    cpp_args = ['-std=c++17', '-O3']
+# ---------------------------------------------
 
 ext_modules = [
     Extension(
-        'bmss_p_cpp', # The name of the module in Python
+        'bmss_p_cpp',
         ['bmss_p.cpp'],
         include_dirs=[pybind11.get_include()],
         language='c++',
-        extra_compile_args=cpp_args,
+        extra_compile_args=cpp_args, # Use the platform-specific args here
     ),
 ]
 
