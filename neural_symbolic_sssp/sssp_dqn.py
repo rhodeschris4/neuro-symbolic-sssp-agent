@@ -87,7 +87,10 @@ class NeuroSymbolicSSSP_DQN:
 
     def potential_function(self, state):
         # Example potential: negative Euclidean distance to goal
-        return -torch.linalg.norm(state - self.goal_state, dim=-1)
+        #return -torch.linalg.norm(state - self.goal_state, dim=-1) Euclidean Distance
+        
+        # Use Manhattan distance for a grid world: |x1 - x2| + |y1 - y2|
+        return -torch.sum(torch.abs(state - self.goal_state), dim=-1)
 
     def update_direct_rl(self):
         if len(self.memory) < self.config['batch_size']: return None
@@ -223,7 +226,7 @@ class NeuroSymbolicSSSP_DQN:
         if len(self.memory) < self.config['planning_N']: return 0
 
         # Update the print statement to show the main progress
-        print(f"\n--- [Step {current_step+1}/{max_steps}] Starting Planning Phase ---")
+        #print(f"\n--- [Step {current_step+1}/{max_steps}] Starting Planning Phase ---")
         successful_plans = 0 # --- NEW: Initialize a counter ---
 
         #print("\n--- Starting Planning Phase ---")

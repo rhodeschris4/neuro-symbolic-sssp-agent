@@ -16,4 +16,8 @@ dist/
 # Outputs
 outputs/
 *.png
+
+# Ignore all .txt files...
 *.txt
+# ...EXCEPT for requirements.txt
+!requirements.txt

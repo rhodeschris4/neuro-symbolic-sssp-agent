@@ -5,6 +5,7 @@ import numpy as np
 import math
 from itertools import count
 import matplotlib.pyplot as plt
+from pathlib import Path
 
 from neural_symbolic_sssp.sssp_dqn import NeuroSymbolicSSSP_DQN
 
@@ -53,17 +54,28 @@ class GridMazeEnv:
 
 # --- Plotting Functions (remain the same) ---
 def plot_rewards(episode_rewards):
+    # --- NEW: Use pathlib ---
+    output_dir = Path("outputs")
+    # Good practice: create the directory if it doesn't exist
+    output_dir.mkdir(exist_ok=True)
+
     plt.figure(figsize=(10, 5))
     plt.plot(episode_rewards)
     plt.title('Total Reward per Episode')
     plt.xlabel('Episode')
     plt.ylabel('Total Reward')
     plt.grid(True)
-    plt.savefig('learning_curve.png')
+    save_path = output_dir / "learning_curve.png"
+    plt.savefig(save_path)
     plt.close()
-    print("Saved learning curve to learning_curve.png")
+    print(f"Saved learning curve to {save_path}")
 
 def plot_trajectory(trajectory, goal, walls, size, episode_num):
+    # --- NEW: Use pathlib ---
+    output_dir = Path("outputs")
+    # Good practice: create the directory if it doesn't exist
+    output_dir.mkdir(exist_ok=True)
+
     plt.figure(figsize=(8, 8))
     if walls:
         wall_x = [w[1] for w in walls]
@@ -87,7 +99,8 @@ def plot_trajectory(trajectory, goal, walls, size, episode_num):
     plt.gca().invert_yaxis()
     plt.grid(True)
     plt.legend()
-    plt.savefig(f'maze_trajectory_episode_{episode_num}.png')
+    save_path = output_dir / f'maze_trajectory_episode_{episode_num}.png'
+    plt.savefig(save_path)
     plt.close()
     print(f"Saved maze trajectory plot to maze_trajectory_episode_{episode_num}.png")
 
