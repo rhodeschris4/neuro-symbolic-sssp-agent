@@ -167,180 +167,91 @@ class NeuroSymbolicSSSP_DQN:
 
         return loss.item() # --- CHANGE: Return the loss ---
 
-    '''def planning_phase(self):
-        # Pseudocode: PLANNING_PHASE
-        if len(self.memory) < self.config['planning_N']: return
+    # In NeuroSymbolicSSSP_DQN class
+    # NEW
+    def _reconstruct_path_and_actions(self, start_node, end_node, preds, V_nodes):
+        """Helper to reconstruct the path and corresponding actions from planner output."""
+        if end_node not in preds and end_node != start_node:
+            return [] # No path found
 
-        print("--- Starting Planning Phase ---") # Add this
-        for x in range(self.config['planning_k']):
-            print(f"  Planning iteration {x+1}/{self.config['planning_k']}...") # Add this
-            # 1. Graph Extraction
-            sampled_transitions = self.memory.sample(self.config['planning_N'])
-            V_states = [t.state for t in sampled_transitions]
-            V_nodes = {i: state for i, state in enumerate(V_states)}
+        path_nodes = []
+        curr = end_node
+        while curr != start_node:
+            path_nodes.append(curr)
+            if curr not in preds: return [] # Path is broken
+            curr = preds[curr]
+        path_nodes.append(start_node)
+        path_nodes.reverse()
 
-            graph = defaultdict(list)
+        actions = []
+        for i in range(len(path_nodes) - 1):
+            # Get coordinates from V_nodes
+            pos_curr = V_nodes[path_nodes[i]].cpu().numpy().flatten()
+            pos_next = V_nodes[path_nodes[i+1]].cpu().numpy().flatten()
 
-            for u_idx, s_u_tensor in V_nodes.items():
-                for a_u in range(self.action_dim):
-                    a_u_tensor = torch.tensor([a_u], device=self.device)
+            # Determine action based on change in coordinates
+            delta_r, delta_c = pos_next[0] - pos_curr[0], pos_next[1] - pos_curr[1]
 
-                    with torch.no_grad():
-                        s_prime_hat_tensor, r_hat_tensor = self.world_model(s_u_tensor, a_u_tensor)
+            if delta_r == -1 and delta_c == 0: actions.append(0) # North
+            elif delta_r == 1 and delta_c == 0: actions.append(1) # South
+            elif delta_r == 0 and delta_c == 1: actions.append(2) # East
+            elif delta_r == 0 and delta_c == -1: actions.append(3) # West
+            # If nodes are not adjacent, it's a model error. Stop the plan.
+            else: return actions
 
-                    # Find closest state in graph to form edge
-                    all_states_tensor = torch.cat(list(V_nodes.values()))
-                    dists = torch.linalg.norm(all_states_tensor - s_prime_hat_tensor, dim=1)
-                    v_idx = torch.argmin(dists).item()
-                    s_v_tensor = V_nodes[v_idx]
+        return actions
 
-                    # 2. Reward Shaping and Cost Transformation
-                    phi_su = self.potential_function(s_u_tensor)
-                    phi_sv = self.potential_function(s_v_tensor)
+    #NEW
+    def plan_action_sequence(self, current_state_tensor):
+        """
+        Generates a sequence of optimal actions using the world model and BMSSP planner.
+        This implements the core of the "Guided Exploration" strategy.
+        """
+        if len(self.memory) < self.config['planning_N']:
+            return [], 0
 
-                    r_shaped = r_hat_tensor + self.config['gamma'] * phi_sv - phi_su
+        # 1. Graph Extraction (same as before)
+        sampled_transitions = self.memory.sample(self.config['planning_N'])
+        V_states_list = [t.state for t in sampled_transitions] + [current_state_tensor]
+        V_nodes = {i: state for i, state in enumerate(V_states_list)}
+        all_V_states = torch.cat(V_states_list, dim=0)
 
-                    # Ensure cost is non-negative
-                    cost = self.config['planning_C'] - r_shaped.item()
-                    graph[u_idx].append((v_idx, cost))
+        batch_states = all_V_states.repeat_interleave(self.action_dim, dim=0)
+        batch_actions = torch.arange(self.action_dim, device=self.device).repeat(len(V_nodes))
 
-            # 3. Short-Horizon SSSP and Q-Network Update
-            (s_p, a_p, _, _) = self.memory.sample(1)[0]
+        with torch.no_grad():
+            pred_next_states, pred_rewards = self.world_model(batch_states, batch_actions)
 
-            with torch.no_grad():
-                r_p_hat, s_p_prime_hat = self.world_model(s_p, a_p.squeeze(0))
+        dists = torch.cdist(pred_next_states, all_V_states)
+        closest_v_indices = torch.argmin(dists, dim=1)
 
-            # Find start and end nodes in the graph
-            all_states_tensor = torch.cat(list(V_nodes.values()))
-            start_dists = torch.linalg.norm(all_states_tensor - s_p, dim=1)
-            start_node = torch.argmin(start_dists).item()
+        graph = defaultdict(list)
+        phi_V = self.potential_function(all_V_states)
+        for j in range(batch_states.shape[0]):
+            u_idx = j // self.action_dim
+            v_idx = closest_v_indices[j].item()
+            r_hat = pred_rewards[j]
+            phi_su = phi_V[u_idx]
+            phi_sv = phi_V[v_idx]
+            r_shaped = r_hat + self.config['gamma'] * phi_sv - phi_su
+            cost = self.config['planning_C'] - r_shaped.item()
+            graph[u_idx].append((v_idx, cost))
 
-            end_dists = torch.linalg.norm(all_states_tensor - s_p_prime_hat, dim=1)
-            end_node = torch.argmin(end_dists).item()
+        # 2. Plan Generation
+        start_node = len(V_nodes) - 1 # The current state is the last one we added
 
-            # Run BMSSP
-            costs = bmss_p_cpp.bmss_p(graph, start_node, max_depth=self.config['planning_H'])
+        # Find the node in the graph closest to the actual goal
+        goal_dists = torch.linalg.norm(all_V_states - self.goal_state, dim=1)
+        end_node = torch.argmin(goal_dists).item()
 
-            # --- ADD THIS DEBUGGING LINE ---
-            print(f"DEBUG: Type of costs is {type(costs)}, value is {costs}")
-            # --------------------------------
+        # Run BMSSP to get path costs and predecessors
+        costs, preds = bmss_p_cpp.bmss_p_with_preds(graph, start_node, max_depth=self.config['planning_H'])
 
-            # --- ADD TIMING AROUND THE C++ CALL ---
-            print(f"    Graph built. Calling C++ BMSSP...")
-            start_time = time.time()
-            costs = bmss_p_cpp.bmss_p(graph, start_node, max_depth=self.config['planning_H'])
-            end_time = time.time()
-            print(f"    C++ BMSSP finished in {end_time - start_time:.4f} seconds.")
-                        # ----------------------------------------
+        # 3. Reconstruct the plan
+        action_plan = self._reconstruct_path_and_actions(start_node, end_node, preds, V_nodes)
 
-            optimal_cost_to_go = costs.get(end_node, float('inf'))
-
-            if optimal_cost_to_go != float('inf'):
-                # Convert cost back to value
-                V_star = -optimal_cost_to_go
-
-                # Update Q-network with the planner's target
-                planning_target = r_p_hat + self.config['gamma'] * V_star
-
-                current_q = self.policy_net(s_p).gather(1, a_p)
-                loss = F.mse_loss(current_q, planning_target.unsqueeze(0))
-
-                self.policy_optimizer.zero_grad()
-                loss.backward()
-                self.policy_optimizer.step()'''
-                # In sssp_dqn.py
-
-    # In sssp_dqn.py
-
-    def planning_phase(self, current_step, max_steps):
-        if len(self.memory) < self.config['planning_N']: return 0
-
-        #print(f"\n--- [Step {current_step+1}/{max_steps}] Starting Planning Phase ---")
-        successful_plans = 0
-
-        for i in range(self.config['planning_k']):
-            t_start_iter = time.time()
-            #print(f"  Planning iteration {i+1}/{self.config['planning_k']}...")
-
-            # 1. Graph Extraction (Batched Version)
-            sampled_transitions = self.memory.sample(self.config['planning_N'])
-            V_states_list = [t.state for t in sampled_transitions]
-            V_nodes = {i: state for i, state in enumerate(V_states_list)}
-            all_V_states = torch.cat(V_states_list, dim=0)
-
-            # Batch Preparation
-            batch_states = all_V_states.repeat_interleave(self.action_dim, dim=0)
-            batch_actions = torch.arange(self.action_dim, device=self.device).repeat(self.config['planning_N'])
-
-            # Batch Prediction
-            with torch.no_grad():
-                pred_next_states, pred_rewards = self.world_model(batch_states, batch_actions)
-
-            # Batch Nearest-Neighbor Search
-            dists = torch.cdist(pred_next_states, all_V_states)
-            closest_v_indices = torch.argmin(dists, dim=1)
-
-            # Graph Construction
-            graph = defaultdict(list)
-            phi_V = self.potential_function(all_V_states)
-            for j in range(batch_states.shape[0]):
-                u_idx = j // self.action_dim
-                v_idx = closest_v_indices[j].item()
-                r_hat = pred_rewards[j]
-                phi_su = phi_V[u_idx]
-                phi_sv = phi_V[v_idx]
-                r_shaped = r_hat + self.config['gamma'] * phi_sv - phi_su
-                cost = self.config['planning_C'] - r_shaped.item()
-                graph[u_idx].append((v_idx, cost))
-
-            # 2. SSSP and Q-Network Update
-            (s_p, a_p, _, _) = self.memory.sample(1)[0]
-
-            with torch.no_grad():
-                s_p_prime_hat, r_p_hat = self.world_model(s_p, a_p.squeeze(0))
-
-            start_dists = torch.linalg.norm(all_V_states - s_p.squeeze(0), dim=1)
-            start_node = torch.argmin(start_dists).item()
-
-            end_dists = torch.linalg.norm(all_V_states - s_p_prime_hat.squeeze(0), dim=1)
-            end_node = torch.argmin(end_dists).item()
-
-            costs = bmss_p_cpp.bmss_p(graph, start_node, max_depth=self.config['planning_H'])
-            optimal_cost_to_go = costs.get(end_node, float('inf'))
-
-            plan_found = optimal_cost_to_go != float('inf')
-            #print(f"    [Iter {i+1}] Plan from node {start_node} to {end_node}. Path found: {plan_found}")
-
-            if plan_found:
-                successful_plans += 1
-
-                # --- THIS IS THE Q-UPDATE LOGIC ---
-                # --- REVISED Q-UPDATE LOGIC ---
-                # The planner minimizes cost, which is equivalent to maximizing the sum of shaped rewards.
-                # V_star_shaped is the planner's estimate of the SHAPED value of the multi-step plan.
-                V_star_shaped = -optimal_cost_to_go
-
-                # To create a valid target for the original Q-network, we must transform the value
-                # back to the unshaped space by adding the potential of the plan's starting state.
-                phi_s_p = self.potential_function(s_p).item()
-                planning_target = V_star_shaped + phi_s_p
-
-                # Get the DQN's current prediction for the loss calculation
-                current_q = self.policy_net(s_p).gather(1, a_p)
-
-                # The loss is calculated between the current Q-value and the high-quality target from the planner
-                target_tensor = torch.tensor([[planning_target]], device=self.device, dtype=torch.float32)
-                loss = F.mse_loss(current_q, target_tensor)
-
-                self.policy_optimizer.zero_grad()
-                loss.backward()
-                self.policy_optimizer.step()
-                # ------------------------------------
-
-            t_end_iter = time.time()
-            #print(f"  Iteration finished in {t_end_iter - t_start_iter:.4f}s.")
-
-        return successful_plans
+        plan_found = 1 if action_plan else 0
+        return action_plan, plan_found
 
     def update_target_net(self):
         self.target_net.load_state_dict(self.policy_net.state_dict())

@@ -7,7 +7,7 @@ import sys
 if sys.platform == 'win32':
     cpp_args = ['/std:c++17', '/O2', '/EHsc']
 else:
-    cpp_args = ['-std=c++17', '-O3']
+    cpp_args = ['-std=c++17', '-O3', '-march=native']
 # ---------------------------------------------
 
 ext_modules = [

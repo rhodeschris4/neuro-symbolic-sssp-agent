@@ -18,6 +18,8 @@ using Graph = std::vector<std::vector<Edge>>;
 using Distances = std::vector<double>;
 using Predecessors = std::vector<int>;
 using VertexSet = std::unordered_set<int>;
+// Near the top of the file, with other using declarations
+using PredecessorsMap = std::map<int, int>;
 
 // A simplified BlockBasedDS using a C++ priority queue (min-heap)
 class BlockBasedDS {
@@ -267,9 +269,73 @@ std::map<int, double> bmss_p(const std::map<int, std::vector<std::pair<int, doub
 }
 
 
+// This version returns both the costs and the predecessors map
+py::tuple bmss_p_with_preds(const std::map<int, std::vector<std::pair<int, double>>>& adj_list, int source, int max_depth) {
+    int max_node_id = source;
+    for(const auto& pair : adj_list) {
+        max_node_id = std::max(max_node_id, pair.first);
+        for(const auto& edge : pair.second) {
+            max_node_id = std::max(max_node_id, edge.first);
+        }
+    }
+    int n = max_node_id + 1;
+
+    Graph graph(n);
+    for (const auto& pair : adj_list) {
+        int u = pair.first;
+        for (const auto& edge : pair.second) {
+            graph[u].push_back(edge);
+        }
+    }
+
+    int k = (n > 1) ? floor(pow(log2(n), 1.0/3.0)) : 1;
+    int t = (n > 1) ? floor(pow(log2(n), 2.0/3.0)) : 1;
+    k = std::max(1, k);
+    t = std::max(1, t);
+
+    Distances dists(n, std::numeric_limits<double>::infinity());
+    Predecessors preds(n, -1);
+
+    if (source < n) {
+        dists[source] = 0;
+    } else {
+        return py::make_tuple(std::map<int, double>(), PredecessorsMap());
+    }
+
+    int l = (t > 0 && n > 1) ? ceil(log2(n) / t) : 1;
+    double B = std::numeric_limits<double>::infinity();
+    VertexSet S = {source};
+
+    bmss_p_recursive(graph, l, B, S, k, t, dists, preds, max_depth, 0, l);
+
+    std::map<int, double> result;
+    for (int i = 0; i < n; ++i) {
+        if (dists[i] != std::numeric_limits<double>::infinity()) {
+            result[i] = dists[i];
+        }
+    }
+
+    PredecessorsMap preds_map;
+    for (int i = 0; i < n; ++i) {
+        if (preds[i] != -1) {
+            preds_map[i] = preds[i];
+        }
+    }
+
+    return py::make_tuple(result, preds_map);
+}
+
+
+
 // Python Module Definition using pybind11
 PYBIND11_MODULE(bmss_p_cpp, m) {
     m.doc() = "C++ implementation of BMSSP algorithm";
+
+    // The original function
     m.def("bmss_p", &bmss_p, "A function that solves BMSSP",
+          py::arg("adj_list"), py::arg("source"), py::arg("max_depth"));
+
+    // The new function that also returns predecessors
+    m.def("bmss_p_with_preds", &bmss_p_with_preds, "A function that solves BMSSP and returns predecessors",
           py::arg("adj_list"), py::arg("source"), py::arg("max_depth"));
 }

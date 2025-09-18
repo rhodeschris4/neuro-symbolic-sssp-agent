@@ -4,12 +4,19 @@ import torch
 import numpy as np
 import time
 from main import GridMazeEnv, plot_trajectory, config # Reuse our environment and plotting
-from sssp_dqn import NeuroSymbolicSSSP_DQN # Reuse the agent and config
+from neural_symbolic_sssp.sssp_dqn import NeuroSymbolicSSSP_DQN # Reuse the agent and config
 
 def test_agent():
     # --- 1. SETUP ---
     # Use the same device and environment setup as in training
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
+    print(f"Using device: {device}")
+
     goal_state = (8, 8)
     walls = [(i, 4) for i in range(2, 9)] + [(2, i) for i in range(5, 8)] + [(8, i) for i in range(5, 8)]
     env = GridMazeEnv(size=10, walls=walls, goal=goal_state)
