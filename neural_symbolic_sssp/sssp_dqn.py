@@ -88,11 +88,31 @@ class NeuroSymbolicSSSP_DQN:
     def potential_function(self, state):
         # Example potential: negative Euclidean distance to goal
         #return -torch.linalg.norm(state - self.goal_state, dim=-1) Euclidean Distance
-        
+
         # Use Manhattan distance for a grid world: |x1 - x2| + |y1 - y2|
         return -torch.sum(torch.abs(state - self.goal_state), dim=-1)
 
     def update_direct_rl(self):
+        # if len(self.memory) < self.config['batch_size']: return None
+        #
+        # transitions = self.memory.sample(self.config['batch_size'])
+        # batch = Transition(*zip(*transitions))
+        #
+        # state_batch = torch.cat(batch.state)
+        # action_batch = torch.cat(batch.action)
+        # reward_batch = torch.cat(batch.reward)
+        # next_state_batch = torch.cat(batch.next_state)
+        #
+        # q_values = self.policy_net(state_batch).gather(1, action_batch)
+        # next_q_values = self.target_net(next_state_batch).max(1)[0].detach()
+        #
+        # expected_q_values = (next_q_values * self.config['gamma']) + reward_batch
+        #
+        # loss = F.mse_loss(q_values, expected_q_values.unsqueeze(1))
+        #
+        # self.policy_optimizer.zero_grad()
+        # loss.backward()
+        # self.policy_optimizer.step()
         if len(self.memory) < self.config['batch_size']: return None
 
         transitions = self.memory.sample(self.config['batch_size'])
@@ -104,7 +124,15 @@ class NeuroSymbolicSSSP_DQN:
         next_state_batch = torch.cat(batch.next_state)
 
         q_values = self.policy_net(state_batch).gather(1, action_batch)
-        next_q_values = self.target_net(next_state_batch).max(1)[0].detach()
+
+        # --- DOUBLE DQN LOGIC ---
+        # 1. Get the best action for the next state from the POLICY network
+        best_next_actions = self.policy_net(next_state_batch).argmax(1).unsqueeze(1)
+
+        # 2. Get the Q-value for that action from the TARGET network
+        q_values_next_target = self.target_net(next_state_batch)
+        next_q_values = q_values_next_target.gather(1, best_next_actions).squeeze(1).detach()
+        # ------------------------
 
         expected_q_values = (next_q_values * self.config['gamma']) + reward_batch
 
@@ -114,7 +142,7 @@ class NeuroSymbolicSSSP_DQN:
         loss.backward()
         self.policy_optimizer.step()
 
-        return loss.item() # Add this line
+        return loss.item()
 
     def update_world_model(self):
         if len(self.memory) < self.config['batch_size']: return
@@ -222,14 +250,14 @@ class NeuroSymbolicSSSP_DQN:
                 self.policy_optimizer.step()'''
                 # In sssp_dqn.py
 
+    # In sssp_dqn.py
+
     def planning_phase(self, current_step, max_steps):
         if len(self.memory) < self.config['planning_N']: return 0
 
-        # Update the print statement to show the main progress
         #print(f"\n--- [Step {current_step+1}/{max_steps}] Starting Planning Phase ---")
-        successful_plans = 0 # --- NEW: Initialize a counter ---
+        successful_plans = 0
 
-        #print("\n--- Starting Planning Phase ---")
         for i in range(self.config['planning_k']):
             t_start_iter = time.time()
             #print(f"  Planning iteration {i+1}/{self.config['planning_k']}...")
@@ -240,46 +268,32 @@ class NeuroSymbolicSSSP_DQN:
             V_nodes = {i: state for i, state in enumerate(V_states_list)}
             all_V_states = torch.cat(V_states_list, dim=0)
 
-            # --- BATCH PREPARATION ---
-            t_start_prep = time.time()
+            # Batch Preparation
             batch_states = all_V_states.repeat_interleave(self.action_dim, dim=0)
             batch_actions = torch.arange(self.action_dim, device=self.device).repeat(self.config['planning_N'])
-            t_end_prep = time.time()
-            #print(f"    1. Batch Prep.....: Done in {t_end_prep - t_start_prep:.6f}s. State batch shape: {batch_states.shape}")
 
-
-            # --- BATCH PREDICTION ---
-            t_start_pred = time.time()
+            # Batch Prediction
             with torch.no_grad():
                 pred_next_states, pred_rewards = self.world_model(batch_states, batch_actions)
-            t_end_pred = time.time()
-            #print(f"    2. World Model....: Done in {t_end_pred - t_start_pred:.6f}s. Predicted {pred_next_states.shape[0]} states.")
 
-
-            # --- BATCH NEAREST-NEIGHBOR SEARCH ---
-            t_start_nn = time.time()
+            # Batch Nearest-Neighbor Search
             dists = torch.cdist(pred_next_states, all_V_states)
             closest_v_indices = torch.argmin(dists, dim=1)
-            t_end_nn = time.time()
-            #print(f"    3. NN Search......: Done in {t_end_nn - t_start_nn:.6f}s.")
 
-
-            # --- BATCH REWARD SHAPING & GRAPH CONSTRUCTION ---
+            # Graph Construction
             graph = defaultdict(list)
             phi_V = self.potential_function(all_V_states)
             for j in range(batch_states.shape[0]):
                 u_idx = j // self.action_dim
                 v_idx = closest_v_indices[j].item()
-
                 r_hat = pred_rewards[j]
                 phi_su = phi_V[u_idx]
                 phi_sv = phi_V[v_idx]
-
                 r_shaped = r_hat + self.config['gamma'] * phi_sv - phi_su
                 cost = self.config['planning_C'] - r_shaped.item()
                 graph[u_idx].append((v_idx, cost))
 
-            # --- SSSP and Q-Network Update ---
+            # 2. SSSP and Q-Network Update
             (s_p, a_p, _, _) = self.memory.sample(1)[0]
 
             with torch.no_grad():
@@ -291,28 +305,37 @@ class NeuroSymbolicSSSP_DQN:
             end_dists = torch.linalg.norm(all_V_states - s_p_prime_hat.squeeze(0), dim=1)
             end_node = torch.argmin(end_dists).item()
 
-            t_start_sssp = time.time()
             costs = bmss_p_cpp.bmss_p(graph, start_node, max_depth=self.config['planning_H'])
-            t_end_sssp = time.time()
-            #print(f"    4. C++ SSSP.......: Done in {t_end_sssp - t_start_sssp:.6f}s.")
-
             optimal_cost_to_go = costs.get(end_node, float('inf'))
 
-            if optimal_cost_to_go != float('inf'):
-                successful_plans += 1 # --- NEW: Increment counter on success ---
+            plan_found = optimal_cost_to_go != float('inf')
+            #print(f"    [Iter {i+1}] Plan from node {start_node} to {end_node}. Path found: {plan_found}")
+
+            if plan_found:
+                successful_plans += 1
+
+                # --- THIS IS THE Q-UPDATE LOGIC ---
+                # Convert the planner's path cost back into a value estimate
                 V_star = -optimal_cost_to_go
+
+                # Create the high-quality learning target
                 planning_target = r_p_hat + self.config['gamma'] * V_star
+
+                # Get the DQN's current prediction for comparison
                 current_q = self.policy_net(s_p).gather(1, a_p)
-                #loss = F.mse_loss(current_q, planning_target.unsqueeze(0))
+
+                # Calculate the loss and update the DQN's weights
                 loss = F.mse_loss(current_q, planning_target)
 
                 self.policy_optimizer.zero_grad()
                 loss.backward()
                 self.policy_optimizer.step()
+                # ------------------------------------
 
             t_end_iter = time.time()
             #print(f"  Iteration finished in {t_end_iter - t_start_iter:.4f}s.")
-            return successful_plans # --- CHANGE: Return the success count ---
+
+        return successful_plans
 
     def update_target_net(self):
         self.target_net.load_state_dict(self.policy_net.state_dict())
