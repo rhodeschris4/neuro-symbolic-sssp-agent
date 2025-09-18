@@ -315,17 +315,22 @@ class NeuroSymbolicSSSP_DQN:
                 successful_plans += 1
 
                 # --- THIS IS THE Q-UPDATE LOGIC ---
-                # Convert the planner's path cost back into a value estimate
-                V_star = -optimal_cost_to_go
+                # --- REVISED Q-UPDATE LOGIC ---
+                # The planner minimizes cost, which is equivalent to maximizing the sum of shaped rewards.
+                # V_star_shaped is the planner's estimate of the SHAPED value of the multi-step plan.
+                V_star_shaped = -optimal_cost_to_go
 
-                # Create the high-quality learning target
-                planning_target = r_p_hat + self.config['gamma'] * V_star
+                # To create a valid target for the original Q-network, we must transform the value
+                # back to the unshaped space by adding the potential of the plan's starting state.
+                phi_s_p = self.potential_function(s_p).item()
+                planning_target = V_star_shaped + phi_s_p
 
-                # Get the DQN's current prediction for comparison
+                # Get the DQN's current prediction for the loss calculation
                 current_q = self.policy_net(s_p).gather(1, a_p)
 
-                # Calculate the loss and update the DQN's weights
-                loss = F.mse_loss(current_q, planning_target)
+                # The loss is calculated between the current Q-value and the high-quality target from the planner
+                target_tensor = torch.tensor([[planning_target]], device=self.device, dtype=torch.float32)
+                loss = F.mse_loss(current_q, target_tensor)
 
                 self.policy_optimizer.zero_grad()
                 loss.backward()

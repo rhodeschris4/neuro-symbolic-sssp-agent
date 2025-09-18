@@ -108,16 +108,17 @@ def plot_trajectory(trajectory, goal, walls, size, episode_num):
 config = {
     'num_episodes': 500, 'max_steps_per_episode': 150,
     'gamma': 0.99, 'eps_start': 1.0, 'eps_end': 0.05,
-    'eps_decay': 20000, 'lr_dqn': 1e-5, 'lr_wm': 1e-3,
+    'eps_decay': 20000, 'lr_dqn': 1e-4, 'lr_wm': 1e-3,
     'replay_capacity': 10000, 'batch_size': 128, 'target_update_freq': 10,
     'planning_k': 3, 'planning_H': 20, 'planning_N': 75,
     'planning_C': 20.0,
+    'planning_interval': 4,
 }
 
 # In main.py
 
 if __name__ == '__main__':
-     # --- NEW: Check for CUDA, then MPS, then CPU ---
+    # --- Check for CUDA, then MPS, then CPU ---
     if torch.cuda.is_available():
         device = torch.device("cuda")
     elif torch.backends.mps.is_available():
@@ -125,6 +126,9 @@ if __name__ == '__main__':
     else:
         device = torch.device("cpu")
     print(f"Using device: {device}")
+
+    # This flag is set once and used in the loop
+    non_blocking = True if device.type == 'cuda' else False
 
     goal_state = (8, 8)
     walls = [(i, 4) for i in range(2, 9)] + [(2, i) for i in range(5, 8)] + [(8, i) for i in range(5, 8)]
@@ -137,16 +141,18 @@ if __name__ == '__main__':
     episode_rewards = []
     plot_every_n_episodes = 25
 
-    # --- NEW: Create a fixed set of states for evaluating Q-values ---
+    # --- Create a fixed set of states for evaluating Q-values (no change needed here) ---
     fixed_states_for_q_eval = [env.reset() for _ in range(32)]
     fixed_states_for_q_eval = torch.tensor(np.array(fixed_states_for_q_eval), device=device, dtype=torch.float32)
 
+    total_steps = 0 # global step counter
 
     for i_episode in range(config['num_episodes']):
         state_np = env.reset()
+        # Initial state tensor (no change needed here)
         state = torch.tensor(np.array([state_np]), device=device, dtype=torch.float32)
 
-        # --- NEW: Add trackers for new stats ---
+        # --- Trackers for stats ---
         total_reward = 0
         trajectory = [state_np]
         dqn_losses = []
@@ -161,20 +167,40 @@ if __name__ == '__main__':
             trajectory.append(next_state_np)
 
             action_val = action.item()
-            agent.memory.push(state, torch.tensor([[action_val]], device=device, dtype=torch.long),
-                              torch.tensor(np.array([next_state_np]), device=device, dtype=torch.float32),
-                              torch.tensor([reward], device=device, dtype=torch.float32))
-            state = torch.tensor(np.array([next_state_np]), device=device, dtype=torch.float32)
 
-            # --- NEW: Capture the returned stats ---
+            # Create tensors on the CPU first
+            action_tensor_cpu = torch.tensor([[action_val]], dtype=torch.long)
+            next_state_tensor_cpu = torch.tensor(np.array([next_state_np]), dtype=torch.float32)
+            reward_tensor_cpu = torch.tensor([reward], dtype=torch.float32)
+
+            # Now, move them to the target device using .to() with the non_blocking flag
+            action_tensor = action_tensor_cpu.to(device, non_blocking=non_blocking)
+            next_state_tensor = next_state_tensor_cpu.to(device, non_blocking=non_blocking)
+            reward_tensor = reward_tensor_cpu.to(device, non_blocking=non_blocking)
+
+            # The 'state' tensor is already on the correct device from the previous step
+            agent.memory.push(state, action_tensor, next_state_tensor, reward_tensor)
+
+            # Update state for the next iteration
+            state = next_state_tensor
+
+            # --- Agent learning updates ---
             dqn_loss = agent.update_direct_rl()
             if dqn_loss is not None: dqn_losses.append(dqn_loss)
 
             wm_loss = agent.update_world_model()
             if wm_loss is not None: wm_losses.append(wm_loss)
 
-            successful_plans = agent.planning_phase(t, config['max_steps_per_episode'])
-            total_successful_plans += successful_plans
+            # --- CORRECTED PLANNING PHASE CALL ---
+            if t % config['planning_interval'] == 0:
+                successful_plans = agent.planning_phase(t, config['max_steps_per_episode'])
+                total_successful_plans += successful_plans
+            # Note: The second, unconditional call to the planning phase has been removed.
+
+            # --- Target network update ---
+            if total_steps % config['target_update_freq'] == 0:
+                agent.update_target_net()
+            total_steps += 1
 
             if done:
                 break
@@ -183,11 +209,17 @@ if __name__ == '__main__':
         episode_rewards.append(total_reward)
         final_steps = t + 1
 
-        # --- NEW: Calculate and format the new stats for printing ---
+        # --- Print stats ---
         avg_dqn_loss = np.mean(dqn_losses) if dqn_losses else 0
         avg_wm_loss = np.mean(wm_losses) if wm_losses else 0
-        total_planning_ops = final_steps * config['planning_k']
-        planner_success_rate = total_successful_plans / total_planning_ops if total_planning_ops > 0 else 0
+        # Correctly calculate planning ops based on the interval
+        # --- FIX: Use math.ceil for an accurate calculation ---
+        planning_interval = config.get('planning_interval', 1)
+        num_planning_triggers = math.ceil(final_steps / planning_interval)
+        planning_opportunities = num_planning_triggers * config['planning_k']
+        # --------------------------------------------------------
+        #planning_opportunities = (final_steps // config.get('planning_interval', 1)) * config['planning_k']
+        planner_success_rate = total_successful_plans / planning_opportunities if planning_opportunities > 0 else 0
         avg_q_value = agent.get_avg_q_value(fixed_states_for_q_eval)
 
         print(f"\n--- Episode {i_episode:4d} Summary ---")
@@ -198,12 +230,9 @@ if __name__ == '__main__':
         if i_episode % plot_every_n_episodes == 0 or i_episode == config['num_episodes'] - 1:
             plot_trajectory(trajectory, goal_state, env.walls, env.size, i_episode)
 
-        if i_episode % config['target_update_freq'] == 0:
-            agent.update_target_net()
-
     print("\nTraining complete.")
     plot_rewards(episode_rewards)
 
-    # --- NEW: Save the trained model's weights ---
+    # --- Save the trained model's weights ---
     torch.save(agent.policy_net.state_dict(), 'agent_policy.pth')
     print("Saved trained policy network to agent_policy.pth")
