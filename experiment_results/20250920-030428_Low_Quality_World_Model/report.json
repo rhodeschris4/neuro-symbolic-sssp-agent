@@ -1,0 +1,26 @@
+{
+    "configuration": {
+        "num_episodes": 1500,
+        "max_steps_per_episode": 150,
+        "gamma": 0.99,
+        "eps_start": 1.0,
+        "eps_end": 0.05,
+        "eps_decay": 40000,
+        "replay_capacity": 10000,
+        "batch_size": 128,
+        "target_update_freq": 500,
+        "planning_N": 75,
+        "planning_C": 20.0,
+        "experiment_name": "Low_Quality_World_Model",
+        "lr_dqn": 0.0001,
+        "lr_wm": 0.0001,
+        "planner_intervention_freq": 25,
+        "forced_exploration_steps": 5,
+        "planning_H": 15,
+        "planning_k": 3
+    },
+    "final_metrics": {
+        "average_reward_last_50_eps": -45.82
+    },
+    "training_duration_seconds": 712.31
+}

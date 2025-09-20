@@ -17,6 +17,15 @@ dist/
 outputs/
 *.png
 
+# RESULTS
+RESULTS/
+
+# old_files
+\old_files
+
+# graphs
+\graphs
+
 # Ignore all .txt files...
 *.txt
 # ...EXCEPT for requirements.txt
