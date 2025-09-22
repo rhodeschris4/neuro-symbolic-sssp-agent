@@ -14,7 +14,7 @@ This project is a Python implementation of a neuro-symbolic reinforcement learni
 
 **1. Clone the Repository**
 ```bash
-git clone <your-repo-url>
+[git https://github.com/rhodeschris4/neuro-symbolic-sssp-agent
 cd neural-symbolic-bssmp-dqn
 ```
 
