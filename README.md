@@ -5,7 +5,7 @@ This project is a Python implementation of a neuro-symbolic reinforcement learni
 ## Features
 - **Deep Q-Network (DQN):** The core model-free component for learning action values.
 - **World Model:** A neural network that learns the environment's dynamics, enabling planning.
-- **Symbolic Planner:** A high-performance C++ implementation of the BMSSP algorithm for finding optimal short-horizon plans.
+- **Symbolic Planner:** A high-performance C++ implementation of the BMSSP algorithm for finding optimal short-horizon plans. Link to white paper: https://arxiv.org/pdf/2504.17033
 - **Batched Graph Generation:** Efficiently constructs planning graphs using batched tensor operations.
 - **Customizable Grid-World Environments:** Includes easily configurable Maze and Lava Pit environments.
 - **Performance Tracking:** Generates learning curves and agent trajectory plots to visualize performance.
