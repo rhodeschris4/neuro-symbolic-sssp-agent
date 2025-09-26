@@ -126,8 +126,20 @@ def run_training(config, output_dir):
             next_state_tensor = torch.tensor(np.array([next_state_np]), device=device, dtype=torch.float32)
             reward_tensor = torch.tensor([reward], device=device, dtype=torch.float32)
 
+
             agent.memory.push(state, action, next_state_tensor, reward_tensor)
             state = next_state_tensor
+
+            # Now use this efficient tensor for both operations
+            agent.memory.push(
+                state,
+                action,
+                next_state_tensor, # Use the pre-made tensor
+                torch.tensor([reward], device=device, dtype=torch.float32),
+                torch.tensor([float(done)], device=device, dtype=torch.float32)
+            )
+            state = next_state_tensor # And reuse it here
+
 
             # --- Learning Updates ---
             dqn_loss = agent.update_direct_rl()

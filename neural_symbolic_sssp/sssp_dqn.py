@@ -58,9 +58,11 @@ class NeuroSymbolicSSSP_DQN:
         state_batch = torch.cat(batch.state)
         action_batch = torch.cat(batch.action)
         reward_batch = torch.cat(batch.reward)
+        done_batch = torch.cat(batch.done)
         next_state_batch = torch.cat(batch.next_state)
 
         q_values = self.policy_net(state_batch).gather(1, action_batch)
+
 
         with torch.no_grad():
             best_next_actions = self.policy_net(next_state_batch).argmax(1).unsqueeze(1)
@@ -77,6 +79,13 @@ class NeuroSymbolicSSSP_DQN:
             total_loss = total_loss + planning_weight * planning_loss
 
         # --- 3. Perform a single optimization step ---
+
+        best_next_actions = self.policy_net(next_state_batch).argmax(1).unsqueeze(1)
+        q_values_next_target = self.target_net(next_state_batch)
+        next_q_values = q_values_next_target.gather(1, best_next_actions).squeeze(1).detach()
+        non_terminal_mask = 1.0 - done_batch
+        expected_q_values = (next_q_values * self.config['gamma'] * non_terminal_mask) + reward_batch
+        loss = F.mse_loss(q_values, expected_q_values.unsqueeze(1))
         self.policy_optimizer.zero_grad()
         total_loss.backward()
         self.policy_optimizer.step()
