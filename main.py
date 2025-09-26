@@ -167,7 +167,8 @@ def run_training(config, output_dir):
                 state,
                 action,
                 next_state_tensor, # Use the pre-made tensor
-                torch.tensor([reward], device=device, dtype=torch.float32)
+                torch.tensor([reward], device=device, dtype=torch.float32),
+                torch.tensor([float(done)], device=device, dtype=torch.float32)
             )
             state = next_state_tensor # And reuse it here
 
