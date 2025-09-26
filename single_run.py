@@ -123,8 +123,9 @@ def run_training(config, output_dir):
 
             next_state_tensor = torch.tensor(np.array([next_state_np]), device=device, dtype=torch.float32)
             reward_tensor = torch.tensor([reward], device=device, dtype=torch.float32)
+            done_tensor = torch.tensor([float(done)], device=device, dtype=torch.float32)
 
-            agent.memory.push(state, action, next_state_tensor, reward_tensor)
+            agent.memory.push(state, action, next_state_tensor, reward_tensor, done_tensor)
             state = next_state_tensor
 
             # --- UPDATED TRAINING STEP ---
