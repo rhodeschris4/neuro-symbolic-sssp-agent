@@ -25,13 +25,13 @@ base_config = {
 # Define a list of experiments. Each entry is a dictionary of the
 # parameters you want to change for that specific run.
 experiments = [
-    # --- Group 1: Baseline and Controls ---
-    {
-        "experiment_name": "DQN_Only_Baseline",
-        "lr_dqn": 1e-4, "lr_wm": 1e-3,
-        "planner_intervention_freq": 99999, "forced_exploration_steps": 0,
-        "planning_H": 0, "planning_k": 0,
-    },
+    # # --- Group 1: Baseline and Controls ---
+    # {
+    #     "experiment_name": "DQN_Only_Baseline",
+    #     "lr_dqn": 1e-4, "lr_wm": 1e-3,
+    #     "planner_intervention_freq": 99999, "forced_exploration_steps": 0,
+    #     "planning_H": 0, "planning_k": 0,
+    # },
     {
         "experiment_name": "Standard_Guided_Run",
         "lr_dqn": 1e-4, "lr_wm": 1e-3,
@@ -39,69 +39,69 @@ experiments = [
         "planning_H": 15, "planning_k": 3,
     },
 
-    # --- Group 2: Planner Frequency vs. Duration ---
-    {
-        "experiment_name": "Frequent_Short_Guidance",
-        "lr_dqn": 1e-4, "lr_wm": 1e-3,
-        "planner_intervention_freq": 15, # Very frequent
-        "forced_exploration_steps": 3,   # Short guidance
-        "planning_H": 15, "planning_k": 3,
-    },
-    {
-        "experiment_name": "Infrequent_Long_Guidance",
-        "lr_dqn": 1e-4, "lr_wm": 1e-3,
-        "planner_intervention_freq": 50, # Infrequent
-        "forced_exploration_steps": 10,  # Long guidance
-        "planning_H": 15, "planning_k": 3,
-    },
-    {
-        "experiment_name": "Very_Frequent_Guidance",
-        "lr_dqn": 1e-4, "lr_wm": 1e-3,
-        "planner_intervention_freq": 10, # Extremely frequent
-        "forced_exploration_steps": 5,
-        "planning_H": 15, "planning_k": 3,
-    },
-
-    # --- Group 3: Learning Rate Sensitivity ---
-    {
-        "experiment_name": "High_DQN_Learning_Rate",
-        "lr_dqn": 5e-4, # Higher LR
-        "lr_wm": 1e-3,
-        "planner_intervention_freq": 25, "forced_exploration_steps": 5,
-        "planning_H": 15, "planning_k": 3,
-    },
-    {
-        "experiment_name": "Low_DQN_Learning_Rate",
-        "lr_dqn": 5e-5, # Lower LR
-        "lr_wm": 1e-3,
-        "planner_intervention_freq": 25, "forced_exploration_steps": 5,
-        "planning_H": 15, "planning_k": 3,
-    },
-
-    # --- Group 4: World Model Quality ---
-    {
-        "experiment_name": "Low_Quality_World_Model",
-        "lr_dqn": 1e-4,
-        "lr_wm": 1e-4, # Lower WM learning rate -> less accurate map
-        "planner_intervention_freq": 25, "forced_exploration_steps": 5,
-        "planning_H": 15, "planning_k": 3,
-    },
-
-    # --- Group 5: Planner Parameter Sensitivity ---
-    {
-        "experiment_name": "Shallow_Planner",
-        "lr_dqn": 1e-4, "lr_wm": 1e-3,
-        "planner_intervention_freq": 25, "forced_exploration_steps": 5,
-        "planning_H": 5, # Planner has very short lookahead
-        "planning_k": 3,
-    },
-    {
-        "experiment_name": "Deep_Planner",
-        "lr_dqn": 1e-4, "lr_wm": 1e-3,
-        "planner_intervention_freq": 25, "forced_exploration_steps": 5,
-        "planning_H": 25, # Planner has very long lookahead
-        "planning_k": 3,
-    },
+    # # --- Group 2: Planner Frequency vs. Duration ---
+    # {
+    #     "experiment_name": "Frequent_Short_Guidance",
+    #     "lr_dqn": 1e-4, "lr_wm": 1e-3,
+    #     "planner_intervention_freq": 15, # Very frequent
+    #     "forced_exploration_steps": 3,   # Short guidance
+    #     "planning_H": 15, "planning_k": 3,
+    # },
+    # {
+    #     "experiment_name": "Infrequent_Long_Guidance",
+    #     "lr_dqn": 1e-4, "lr_wm": 1e-3,
+    #     "planner_intervention_freq": 50, # Infrequent
+    #     "forced_exploration_steps": 10,  # Long guidance
+    #     "planning_H": 15, "planning_k": 3,
+    # },
+    # {
+    #     "experiment_name": "Very_Frequent_Guidance",
+    #     "lr_dqn": 1e-4, "lr_wm": 1e-3,
+    #     "planner_intervention_freq": 10, # Extremely frequent
+    #     "forced_exploration_steps": 5,
+    #     "planning_H": 15, "planning_k": 3,
+    # },
+    #
+    # # --- Group 3: Learning Rate Sensitivity ---
+    # {
+    #     "experiment_name": "High_DQN_Learning_Rate",
+    #     "lr_dqn": 5e-4, # Higher LR
+    #     "lr_wm": 1e-3,
+    #     "planner_intervention_freq": 25, "forced_exploration_steps": 5,
+    #     "planning_H": 15, "planning_k": 3,
+    # },
+    # {
+    #     "experiment_name": "Low_DQN_Learning_Rate",
+    #     "lr_dqn": 5e-5, # Lower LR
+    #     "lr_wm": 1e-3,
+    #     "planner_intervention_freq": 25, "forced_exploration_steps": 5,
+    #     "planning_H": 15, "planning_k": 3,
+    # },
+    #
+    # # --- Group 4: World Model Quality ---
+    # {
+    #     "experiment_name": "Low_Quality_World_Model",
+    #     "lr_dqn": 1e-4,
+    #     "lr_wm": 1e-4, # Lower WM learning rate -> less accurate map
+    #     "planner_intervention_freq": 25, "forced_exploration_steps": 5,
+    #     "planning_H": 15, "planning_k": 3,
+    # },
+    #
+    # # --- Group 5: Planner Parameter Sensitivity ---
+    # {
+    #     "experiment_name": "Shallow_Planner",
+    #     "lr_dqn": 1e-4, "lr_wm": 1e-3,
+    #     "planner_intervention_freq": 25, "forced_exploration_steps": 5,
+    #     "planning_H": 5, # Planner has very short lookahead
+    #     "planning_k": 3,
+    # },
+    # {
+    #     "experiment_name": "Deep_Planner",
+    #     "lr_dqn": 1e-4, "lr_wm": 1e-3,
+    #     "planner_intervention_freq": 25, "forced_exploration_steps": 5,
+    #     "planning_H": 25, # Planner has very long lookahead
+    #     "planning_k": 3,
+    # },
 ]
 
 # --------------------------------------------------------------------------

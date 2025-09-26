@@ -1,6 +1,6 @@
 {
     "configuration": {
-        "num_episodes": 1500,
+        "num_episodes": 1000,
         "max_steps_per_episode": 150,
         "gamma": 0.99,
         "eps_start": 1.0,
@@ -11,16 +11,16 @@
         "target_update_freq": 500,
         "planning_N": 75,
         "planning_C": 20.0,
-        "experiment_name": "Frequent_Short_Guidance",
+        "experiment_name": "Standard_Guided_Run",
         "lr_dqn": 0.0001,
         "lr_wm": 0.001,
-        "planner_intervention_freq": 15,
-        "forced_exploration_steps": 3,
+        "planner_intervention_freq": 25,
+        "forced_exploration_steps": 5,
         "planning_H": 15,
         "planning_k": 3
     },
     "final_metrics": {
-        "average_reward_last_50_eps": -44.36
+        "average_reward_last_50_eps": -59.16
     },
-    "training_duration_seconds": 714.17
+    "training_duration_seconds": 515.11
 }

@@ -85,7 +85,6 @@ def plot_trajectory(trajectory, goal, walls, size, episode_num, save_path):
 
 
 def run_training(config, output_dir):
-    # --- Setup ---
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
@@ -104,7 +103,6 @@ def run_training(config, output_dir):
     episode_rewards = []
     total_steps = 0
 
-    # --- Training Loop ---
     for i_episode in range(num_episodes):
         state_np = env.reset()
         state = torch.tensor(np.array([state_np]), device=device, dtype=torch.float32)
@@ -129,21 +127,28 @@ def run_training(config, output_dir):
             agent.memory.push(state, action, next_state_tensor, reward_tensor)
             state = next_state_tensor
 
-            # --- Learning Updates ---
-            dqn_loss = agent.update_direct_rl()
-            if dqn_loss is not None: dqn_losses.append(dqn_loss)
-
-            wm_loss = agent.update_world_model()
-            if wm_loss is not None: wm_losses.append(wm_loss)
-
-            # --- UPDATED: Planner Intervention for Value Update ---
+            # --- UPDATED TRAINING STEP ---
+            planning_loss = None
+            plan_success_count = 0
             if total_steps > 0 and total_steps % config.get('planner_intervention_freq', 99999) == 0:
                 planning_opportunities += config.get('planning_k', 1)
                 for _ in range(config.get('planning_k', 1)):
-                    plan_success = agent.planning_update()
-                    total_successful_plans += plan_success
+                    p_loss, p_success = agent.planning_update()
+                    if p_loss is not None:
+                        planning_loss = p_loss
+                    plan_success_count += p_success
 
-            # --- Target network update ---
+            total_successful_plans += plan_success_count
+
+            # The main optimization step now includes the optional planning loss
+            dqn_loss = agent.optimize_model(planning_loss)
+            if dqn_loss is not None:
+                dqn_losses.append(dqn_loss)
+
+            wm_loss = agent.update_world_model()
+            if wm_loss is not None:
+                wm_losses.append(wm_loss)
+
             if total_steps > 0 and total_steps % config['target_update_freq'] == 0:
                 agent.update_target_net()
 
@@ -177,28 +182,24 @@ def run_training(config, output_dir):
     return final_metrics
 
 if __name__ == '__main__':
-    # This is a sample config for a single run.
-    # Use run_experiments.py for batch runs.
     config = {
         'num_episodes': 1500,
         'max_steps_per_episode': 150,
         'gamma': 0.99,
         'eps_start': 1.0,
         'eps_end': 0.05,
-        'eps_decay': 40000,
+        'eps_decay': 80000, # Slower decay
         'replay_capacity': 10000,
         'batch_size': 128,
         'target_update_freq': 500,
-        'planning_N': 75,
         'planning_C': 20.0,
         'lr_dqn': 1e-4,
         'lr_wm': 1e-3,
-
-        # --- Planning Hyperparameters (Tune for Speed vs. Quality) ---
-        'planning_N': 75,             # Max nodes in the planning graph. Smaller = faster, but less complete graph.
-        'planning_H': 15,             # Planning depth (rollout steps). Smaller = faster, but shorter plans.
-        'planner_intervention_freq': 25, # How often to plan. Higher = faster training, less guidance.
-        'planning_k': 3,              # Num of planning updates per intervention. Lower = faster training.
+        'planning_N': 75,
+        'planning_H': 15,
+        'planner_intervention_freq': 25,
+        'planning_k': 3,
+        'planning_loss_weight': 0.5 # NEW: Weight for the planner's loss
     }
 
     output_dir = Path("single_run_output")

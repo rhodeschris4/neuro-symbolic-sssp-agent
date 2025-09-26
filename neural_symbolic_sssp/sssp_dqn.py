@@ -3,7 +3,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
 import random
-from collections import defaultdict
+from collections import defaultdict, deque
 import math
 import time
 from neural_symbolic_sssp.models import DQN, WorldModel
@@ -11,13 +11,12 @@ from neural_symbolic_sssp.utils import ReplayBuffer, Transition
 import bmss_p_cpp
 
 class NeuroSymbolicSSSP_DQN:
-    def __init__(self, state_dim, action_dim, config, device): # goal_state removed
+    def __init__(self, state_dim, action_dim, config, device):
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.config = config
         self.device = device
 
-        # ... (network and optimizer initialization remains the same) ...
         policy_net_instance = DQN(state_dim, action_dim).to(self.device)
         target_net_instance = DQN(state_dim, action_dim).to(self.device)
         world_model_instance = WorldModel(state_dim, action_dim).to(self.device)
@@ -31,7 +30,6 @@ class NeuroSymbolicSSSP_DQN:
         self.memory = ReplayBuffer(config['replay_capacity'])
         self.steps_done = 0
 
-    # ... (select_action, update_direct_rl, update_world_model remain the same) ...
     def select_action(self, state, evaluate=False):
         if evaluate:
             with torch.no_grad():
@@ -46,27 +44,47 @@ class NeuroSymbolicSSSP_DQN:
         else:
             return torch.tensor([[random.randrange(self.action_dim)]], device=self.device, dtype=torch.long)
 
-    def update_direct_rl(self):
-        if len(self.memory) < self.config['batch_size']: return None
+    def optimize_model(self, planning_loss=None):
+        """
+        UPDATED: This is now the central optimization function for the DQN.
+        It combines the standard TD loss with an optional planning loss.
+        """
+        if len(self.memory) < self.config['batch_size']:
+            return None
+
+        # --- 1. Calculate Standard TD Loss from experience replay ---
         transitions = self.memory.sample(self.config['batch_size'])
         batch = Transition(*zip(*transitions))
         state_batch = torch.cat(batch.state)
         action_batch = torch.cat(batch.action)
         reward_batch = torch.cat(batch.reward)
         next_state_batch = torch.cat(batch.next_state)
+
         q_values = self.policy_net(state_batch).gather(1, action_batch)
-        best_next_actions = self.policy_net(next_state_batch).argmax(1).unsqueeze(1)
-        q_values_next_target = self.target_net(next_state_batch)
-        next_q_values = q_values_next_target.gather(1, best_next_actions).squeeze(1).detach()
-        expected_q_values = (next_q_values * self.config['gamma']) + reward_batch
-        loss = F.mse_loss(q_values, expected_q_values.unsqueeze(1))
+
+        with torch.no_grad():
+            best_next_actions = self.policy_net(next_state_batch).argmax(1).unsqueeze(1)
+            q_values_next_target = self.target_net(next_state_batch)
+            next_q_values = q_values_next_target.gather(1, best_next_actions).squeeze(1)
+            expected_q_values = (next_q_values * self.config['gamma']) + reward_batch
+
+        td_loss = F.mse_loss(q_values, expected_q_values.unsqueeze(1))
+
+        # --- 2. Combine with Planning Loss if available ---
+        total_loss = td_loss
+        if planning_loss is not None:
+            planning_weight = self.config.get('planning_loss_weight', 1.0)
+            total_loss = total_loss + planning_weight * planning_loss
+
+        # --- 3. Perform a single optimization step ---
         self.policy_optimizer.zero_grad()
-        loss.backward()
+        total_loss.backward()
         self.policy_optimizer.step()
-        return loss.item()
+
+        return total_loss.item()
 
     def update_world_model(self):
-        if len(self.memory) < self.config['batch_size']: return
+        if len(self.memory) < self.config['batch_size']: return None
         transitions = self.memory.sample(self.config['batch_size'])
         batch = Transition(*zip(*transitions))
         state_batch = torch.cat(batch.state)
@@ -82,91 +100,81 @@ class NeuroSymbolicSSSP_DQN:
         self.world_model_optimizer.step()
         return loss.item()
 
-    # --- MODIFIED FOR GENERALIZATION ---
     def potential_function(self, state):
-        """Calculates potential based on Manhattan distance to the goal in the state."""
         agent_pos = state[:, :2]
         goal_pos = state[:, 2:]
         return -torch.sum(torch.abs(agent_pos - goal_pos), dim=-1)
 
-    # --- plan_action_sequence is also MODIFIED ---
-    def plan_action_sequence(self, current_state_tensor):
+    def planning_update(self):
+        """
+        UPDATED: This function no longer updates the network directly.
+        Instead, it calculates and returns the planning loss tensor.
+        """
         if len(self.memory) < self.config['planning_N']:
-            return [], 0
+            return None, 0
 
-        # Extract the dynamic goal from the current state
-        dynamic_goal_state = current_state_tensor[:, 2:].squeeze(0)
-
-        # 1. Graph Extraction
-        sampled_transitions = self.memory.sample(self.config['planning_N'])
-        # We only care about the agent's position for planning nodes
-        V_agent_pos_list = [t.state[:, :2] for t in sampled_transitions] + [current_state_tensor[:, :2]]
-        V_nodes = {i: pos for i, pos in enumerate(V_agent_pos_list)}
-        all_V_agent_pos = torch.cat(V_agent_pos_list, dim=0)
-
-        # To use the world model, we must reconstruct a full 4D state for prediction
-        # We'll assume the goal for all sampled states was the current dynamic_goal_state
-        reconstructed_states = torch.cat([all_V_agent_pos, dynamic_goal_state.repeat(len(V_nodes), 1)], dim=1)
-
-        batch_states = reconstructed_states.repeat_interleave(self.action_dim, dim=0)
-        batch_actions = torch.arange(self.action_dim, device=self.device).repeat(len(V_nodes))
+        (s_p, a_p, _, _) = self.memory.sample(1)[0]
 
         with torch.no_grad():
-            pred_next_states, pred_rewards = self.world_model(batch_states, batch_actions)
-
-        # We only need the agent position part of the predicted next states for graph building
-        pred_next_agent_pos = pred_next_states[:, :2]
-
-        dists = torch.cdist(pred_next_agent_pos, all_V_agent_pos)
-        closest_v_indices = torch.argmin(dists, dim=1)
+            s_p_prime_hat, r_p_hat = self.world_model(s_p, a_p.squeeze(0))
 
         graph = defaultdict(list)
-        # The potential function here needs a full 4D state
-        phi_V = self.potential_function(reconstructed_states)
-        for j in range(batch_states.shape[0]):
-            u_idx = j // self.action_dim
-            v_idx = closest_v_indices[j].item()
-            r_hat = pred_rewards[j]
-            phi_su = phi_V[u_idx]
-            phi_sv = phi_V[v_idx]
-            r_shaped = r_hat + self.config['gamma'] * phi_sv - phi_su
-            cost = self.config['planning_C'] - r_shaped.item()
-            graph[u_idx].append((v_idx, cost))
+        state_map = {tuple(s_p_prime_hat.cpu().numpy().flatten()): (0, s_p_prime_hat)}
+        node_id_counter = 1
+        current_layer_states = [s_p_prime_hat]
 
-        # 2. Plan Generation
-        start_node = len(V_nodes) - 1
-        goal_dists = torch.linalg.norm(all_V_agent_pos - dynamic_goal_state, dim=1)
-        end_node = torch.argmin(goal_dists).item()
+        for _ in range(self.config['planning_H']):
+            if not current_layer_states or len(state_map) >= self.config['planning_N']:
+                break
 
-        costs, preds = bmss_p_cpp.bmss_p_with_preds(graph, start_node, max_depth=self.config['planning_H'])
+            layer_state_tensors = torch.cat(current_layer_states, dim=0)
+            num_states_in_layer = layer_state_tensors.size(0)
+            batch_states = layer_state_tensors.repeat_interleave(self.action_dim, dim=0)
+            batch_actions = torch.arange(self.action_dim, device=self.device).repeat(num_states_in_layer)
 
-        action_plan = self._reconstruct_path_and_actions(start_node, end_node, preds, V_nodes)
+            with torch.no_grad():
+                pred_next_states, pred_rewards = self.world_model(batch_states, batch_actions)
 
-        return action_plan, 1 if action_plan else 0
+            next_layer_states = []
+            for i in range(batch_states.size(0)):
+                u_state_tuple = tuple(batch_states[i].cpu().numpy().flatten())
+                u_idx, u_state_tensor = state_map[u_state_tuple]
+                v_state_tensor = pred_next_states[i].unsqueeze(0)
+                v_state_tuple = tuple(v_state_tensor.cpu().numpy().flatten())
 
-    # ... (The rest of the class, including _reconstruct_path_and_actions, update_target_net, get_epsilon, remains unchanged) ...
-    def _reconstruct_path_and_actions(self, start_node, end_node, preds, V_nodes):
-        if end_node not in preds and end_node != start_node:
-            return []
-        path_nodes = []
-        curr = end_node
-        while curr != start_node:
-            path_nodes.append(curr)
-            if curr not in preds: return []
-            curr = preds[curr]
-        path_nodes.append(start_node)
-        path_nodes.reverse()
-        actions = []
-        for i in range(len(path_nodes) - 1):
-            pos_curr = V_nodes[path_nodes[i]].cpu().numpy().flatten()
-            pos_next = V_nodes[path_nodes[i+1]].cpu().numpy().flatten()
-            delta_r, delta_c = pos_next[0] - pos_curr[0], pos_next[1] - pos_curr[1]
-            if delta_r == -1 and delta_c == 0: actions.append(0)
-            elif delta_r == 1 and delta_c == 0: actions.append(1)
-            elif delta_r == 0 and delta_c == 1: actions.append(2)
-            elif delta_r == 0 and delta_c == -1: actions.append(3)
-            else: return actions
-        return actions
+                if v_state_tuple not in state_map:
+                    if len(state_map) >= self.config['planning_N']: continue
+                    v_idx = node_id_counter
+                    state_map[v_state_tuple] = (v_idx, v_state_tensor)
+                    node_id_counter += 1
+                    next_layer_states.append(v_state_tensor)
+                else:
+                    v_idx, _ = state_map[v_state_tuple]
+
+                r_hat = pred_rewards[i]
+                phi_su = self.potential_function(u_state_tensor)
+                phi_sv = self.potential_function(v_state_tensor)
+                r_shaped = r_hat + self.config['gamma'] * phi_sv - phi_su
+                cost = self.config['planning_C'] - r_shaped.item()
+                graph[u_idx].append((v_idx, cost))
+            current_layer_states = next_layer_states
+
+        start_node = 0
+        costs = bmss_p_cpp.bmss_p(graph, start_node, max_depth=self.config['planning_H'])
+
+        if not costs: return None, 0
+
+        optimal_cost_to_go = min(costs.values())
+        V_star_shaped = -optimal_cost_to_go
+        phi_s_p_prime = self.potential_function(s_p_prime_hat).item()
+        q_target = r_p_hat.item() + self.config['gamma'] * (V_star_shaped + phi_s_p_prime)
+
+        current_q_val = self.policy_net(s_p).gather(1, a_p)
+        target_tensor = torch.tensor([[q_target]], device=self.device, dtype=torch.float32)
+
+        planning_loss = F.mse_loss(current_q_val, target_tensor)
+
+        return planning_loss, 1
 
     def update_target_net(self):
         self.target_net.load_state_dict(self.policy_net.state_dict())
